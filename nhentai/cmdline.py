@@ -46,8 +46,8 @@ def write_config():
         f.write(json.dumps(constant.CONFIG))
 
 
-def cmd_parser():
-    load_config()
+def cmd_parser(para):
+    #load_config()
 
     parser = OptionParser('\n  nhentai --search [keyword] --download'
                           '\n  NHENTAI=http://h.loli.club nhentai --id [ID ...]'
@@ -128,7 +128,7 @@ def cmd_parser():
     except UnicodeDecodeError:
         exit(0)
 
-    args, _ = parser.parse_args(sys.argv[1:])
+    args, _ = parser.parse_args(para)
 
     if args.html_viewer:
         generate_html(template=constant.CONFIG['template'])

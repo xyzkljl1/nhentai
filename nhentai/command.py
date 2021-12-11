@@ -17,14 +17,17 @@ from nhentai.utils import generate_html, generate_cbz, generate_main_html, gener
     paging, check_cookie, signal_handler, DB
 
 
-def main():
-    banner()
+def main(proxy,cookie,para):
+    constant.CONFIG['proxy']={'http':proxy,'https':proxy}
+    constant.CONFIG['cookie']=cookie
+
+    #banner()
 
     if sys.version_info < (3, 0, 0):
         logger.error('nhentai now only support Python 3.x')
         exit(1)
 
-    options = cmd_parser()
+    options = cmd_parser(para)
     logger.info('Using mirror: {0}'.format(BASE_URL))
 
     # CONFIG['proxy'] will be changed after cmd_parser()

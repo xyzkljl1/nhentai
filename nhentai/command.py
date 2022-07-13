@@ -94,10 +94,7 @@ def main(proxy,cookie,para):
         for doujinshi in doujinshi_list:
             if not options.dryrun:
                 doujinshi.downloader = downloader
-                doujinshi.download()
-
-            doujinshi.downloader = downloader
-            doujinshi.download()
+                doujinshi.download(regenerate_cbz=options.regenerate_cbz)
 
             if options.generate_metadata:
                 table = doujinshi.table

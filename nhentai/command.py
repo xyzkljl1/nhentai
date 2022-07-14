@@ -17,9 +17,10 @@ from nhentai.utils import generate_html, generate_cbz, generate_main_html, gener
     paging, check_cookie, signal_handler, DB
 
 
-def main(proxy,cookie,para):
+def main(proxy,cookie,useragent,para):
     constant.CONFIG['proxy']={'http':proxy,'https':proxy}
     constant.CONFIG['cookie']=cookie
+    constant.CONFIG['useragent']=useragent
 
     #banner()
 

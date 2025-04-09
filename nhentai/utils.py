@@ -57,7 +57,7 @@ async def async_request(method, url, proxy = None, **kwargs):
     if isinstance(proxy, (str, )) and not proxy:
         proxy = None
 
-    async with httpx.AsyncClient(headers=headers, verify=False, proxy=proxy, **kwargs) as client:
+    async with httpx.AsyncClient(headers=headers, verify=False, proxies={"http://": proxy,"https://": proxy}, **kwargs) as client:
         response = await client.request(method, url, **kwargs)
 
     return response

@@ -160,7 +160,7 @@ def cmd_parser(para):
     parser.add_argument('--legacy', dest='legacy', action='store_true', default=False,
                         help='use legacy searching method')
 
-    args, _ = parser.parse_args(para)
+    args = parser.parse_args(para)
 
     if args.html_viewer:
         if not os.path.exists(args.html_viewer):

@@ -11,6 +11,8 @@ nhentai
 
 nhentai is a CLI tool for downloading doujinshi from `nhentai.net <https://nhentai.net>`_
 
+GUI version: `https://github.com/edgar1016/nhentai-GUI <https://github.com/edgar1016/nhentai-GUI>`_
+
 ===================
 Manual Installation
 ===================
@@ -20,7 +22,7 @@ From Github:
 
     git clone https://github.com/RicterZ/nhentai
     cd nhentai
-    python setup.py install
+    pip install --no-cache-dir .
 
 Build Docker container:
 
@@ -57,7 +59,7 @@ On Gentoo Linux:
 
 .. code-block::
 
-    layman -fa glicOne
+    layman -fa glibOne
     sudo emerge net-misc/nhentai
 
 On NixOS:
@@ -127,17 +129,20 @@ Download your favorites with delay:
 
 .. code-block:: bash
 
-    nhentai --favorites --download --delay 1
+    nhentai --favorites --download --delay 1 --page 3-5,7
 
 Format output doujinshi folder name:
 
 .. code-block:: bash
 
     nhentai --id 261100 --format '[%i]%s'
+    # for Windows
+    nhentai --id 261100 --format "[%%i]%%s"
 
 Supported doujinshi folder formatter:
 
 - %i: Doujinshi id
+- %f: Doujinshi favorite count
 - %t: Doujinshi name
 - %s: Doujinshi subtitle (translated name)
 - %a: Doujinshi authors' name
@@ -145,6 +150,7 @@ Supported doujinshi folder formatter:
 - %p: Doujinshi pretty name
 - %ag: Doujinshi authors name or groups name
 
+Note: for Windows operation system, please use double "%", such as "%%i".
 
 Other options:
 
@@ -159,25 +165,21 @@ Other options:
       NHENTAI                 nhentai mirror url
 
     Options:
-      # Operation options, control the program behaviors
       -h, --help            show this help message and exit
       -D, --download        download doujinshi (for search results)
       -S, --show            just show the doujinshi information
-
-      # Doujinshi options, specify id, keyword, etc.
       --id                  doujinshi ids set, e.g. 167680 167681 167682
       -s KEYWORD, --search=KEYWORD
                             search doujinshi by keyword
       -F, --favorites       list or download your favorites
-
-      # Page options, control the page to fetch / download
+      -a ARTIST, --artist=ARTIST
+                            list doujinshi by artist name
       --page-all            all search results
       --page=PAGE, --page-range=PAGE
                             page number of search results. e.g. 1,2-5,14
-      --sorting=SORTING     sorting of doujinshi (recent / popular /
+      --sorting=SORTING, --sort=SORTING
+                            sorting of doujinshi (recent / popular /
                             popular-[today|week])
-
-      # Download options, the output directory, threads, timeout, delay, etc.
       -o OUTPUT_DIR, --output=OUTPUT_DIR
                             output dir
       -t THREADS, --threads=THREADS
@@ -186,12 +188,12 @@ Other options:
                             timeout for downloading doujinshi
       -d DELAY, --delay=DELAY
                             slow down between downloading every doujinshi
+      --retry=RETRY         retry times when downloading failed
+      --exit-on-fail        exit on fail to prevent generating incomplete files
       --proxy=PROXY         store a proxy, for example: -p "http://127.0.0.1:1080"
       -f FILE, --file=FILE  read gallery IDs from file.
       --format=NAME_FORMAT  format the saved folder name
       --dry-run             Dry run, skip file download
-
-      # Generate options, for generate html viewer, cbz file, pdf file, etc
       --html                generate a html viewer at current directory
       --no-html             don't generate HTML after downloading
       --gen-main            generate a main viewer contain all the doujin in the
@@ -200,10 +202,10 @@ Other options:
       -P, --pdf             generate PDF file
       --rm-origin-dir       remove downloaded doujinshi dir when generated CBZ or
                             PDF file
+      --move-to-folder      remove files in doujinshi dir then move new file to
+                            folder when generated CBZ or PDF file
       --meta                generate a metadata file in doujinshi format
-      --regenerate-cbz      regenerate the cbz file if exists
-
-      # nhentai options, set cookie, user-agent, language, remove caches, histories, etc
+      --regenerate          regenerate the cbz or pdf file if exists
       --cookie=COOKIE       set cookie of nhentai to bypass Cloudflare captcha
       --useragent=USERAGENT, --user-agent=USERAGENT
                             set useragent to bypass Cloudflare captcha
@@ -227,6 +229,9 @@ For example:
 .. code-block::
 
     i.h.loli.club -> i.nhentai.net
+    i3.h.loli.club -> i3.nhentai.net
+    i5.h.loli.club -> i5.nhentai.net
+    i7.h.loli.club -> i7.nhentai.net
     h.loli.club -> nhentai.net
 
 Set `NHENTAI` env var to your nhentai mirror.

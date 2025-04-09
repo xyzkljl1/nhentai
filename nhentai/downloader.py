@@ -1,28 +1,19 @@
 # coding: utf-
 
-import multiprocessing
-import signal
-
-import sys
 import os
-import requests
-import time
+import asyncio
+import httpx
 import urllib3.exceptions
+import zipfile
+import io
 
 from urllib.parse import urlparse
 from nhentai import constant
 from nhentai.logger import logger
-from nhentai.parser import request
-from nhentai.utils import Singleton
+from nhentai.utils import Singleton, async_request
 
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-semaphore = multiprocessing.Semaphore(1)
-
-
-class NHentaiImageNotExistException(Exception):
-    pass
-
 
 def download_callback(result):
     result, data = result
@@ -40,121 +31,165 @@ def download_callback(result):
 
 
 class Downloader(Singleton):
-
-    def __init__(self, path='', size=5, timeout=30, delay=0):
-        self.size = size
+    def __init__(self, path='', threads=5, timeout=30, delay=0, exit_on_fail=False,
+                 no_filename_padding=False):
+        self.threads = threads
         self.path = str(path)
         self.timeout = timeout
         self.delay = delay
+        self.exit_on_fail = exit_on_fail
+        self.folder = None
+        self.semaphore = None
+        self.no_filename_padding = no_filename_padding
 
-    def download(self, url, folder='', filename='', retried=0, proxy=None):
-        if self.delay:
-            time.sleep(self.delay)
+    async def fiber(self, tasks):
+        self.semaphore = asyncio.Semaphore(self.threads)
+        for completed_task in asyncio.as_completed(tasks):
+            try:
+                result = await completed_task
+                if result[0] > 0:
+                    logger.info(f'{result[1]} download completed')
+                else:
+                    raise Exception(f'{result[1]} download failed, return value {result[0]}')
+            except Exception as e:
+                logger.error(f'An error occurred: {e}')
+                if self.exit_on_fail:
+                    raise Exception('User intends to exit on fail')
+
+    async def _semaphore_download(self, *args, **kwargs):
+        async with self.semaphore:
+            return await self.download(*args, **kwargs)
+
+    async def download(self, url, folder='', filename='', retried=0, proxy=None, length=0):
         logger.info(f'Starting to download {url} ...')
+
+        if self.delay:
+            await asyncio.sleep(self.delay)
+
         filename = filename if filename else os.path.basename(urlparse(url).path)
         base_filename, extension = os.path.splitext(filename)
 
-        save_file_path = os.path.join(folder, base_filename.zfill(3) + extension)
+        if not self.no_filename_padding:
+            filename = base_filename.zfill(length) + extension
+        else:
+            filename = base_filename + extension
+
         try:
-            if os.path.exists(save_file_path):
-                logger.warning(f'Ignored exists file: {save_file_path}')
-                return 1, url
+            response = await async_request('GET', url, timeout=self.timeout, proxy=proxy)
 
-            response = None
-            with open(save_file_path, "wb") as f:
-                i = 0
-                while i < 10:
-                    try:
-                        response = request('get', url, stream=True, timeout=self.timeout, proxies=proxy)
-                        if response.status_code != 200:
-                            raise NHentaiImageNotExistException
+            if response.status_code != 200:
+                path = urlparse(url).path
+                for mirror in constant.IMAGE_URL_MIRRORS:
+                    logger.info(f"Try mirror: {mirror}{path}")
+                    mirror_url = f'{mirror}{path}'
+                    response = await async_request('GET', mirror_url, timeout=self.timeout, proxies=proxy)
+                    if response.status_code == 200:
+                        break
 
-                    except NHentaiImageNotExistException as e:
-                        raise e
+            if not await self.save(filename, response):
+                logger.error(f'Can not download image {url}')
+                return -1, url
 
-                    except Exception as e:
-                        i += 1
-                        if not i < 10:
-                            logger.critical(str(e))
-                            return 0, None
-                        continue
+        except (httpx.HTTPStatusError, httpx.TimeoutException, httpx.ConnectError) as e:
+            if retried < constant.RETRY_TIMES:
+                logger.warning(f'Download {filename} failed, retrying({retried + 1}) times...')
+                return await self.download(
+                    url=url,
+                    folder=folder,
+                    filename=filename,
+                    retried=retried + 1,
+                    proxy=proxy,
+                )
+            else:
+                logger.warning(f'Download {filename} failed with {constant.RETRY_TIMES} times retried, skipped')
+                return -2, url
 
-                    break
+        except Exception as e:
+            import traceback
 
+            logger.error(f"Exception type: {type(e)}")
+            traceback.print_stack()
+            logger.critical(str(e))
+            return -9, url
+
+        except KeyboardInterrupt:
+            return -4, url
+
+        return 1, url
+
+    async def save(self, filename, response) -> bool:
+        if response is None:
+            logger.error('Error: Response is None')
+            return False
+        save_file_path = os.path.join(self.folder, filename)
+        with open(save_file_path, 'wb') as f:
+            if response is not None:
                 length = response.headers.get('content-length')
                 if length is None:
                     f.write(response.content)
                 else:
-                    for chunk in response.iter_content(2048):
+                    async for chunk in response.aiter_bytes(2048):
                         f.write(chunk)
+        return True
 
-        except (requests.HTTPError, requests.Timeout) as e:
-            if retried < 3:
-                logger.warning(f'Warning: {e}, retrying({retried}) ...')
-                return 0, self.download(url=url, folder=folder, filename=filename,
-                                        retried=retried+1, proxy=proxy)
-            else:
-                return 0, None
-
-        except NHentaiImageNotExistException as e:
-            os.remove(save_file_path)
-            return -1, url
-
-        except Exception as e:
-            import traceback
-            traceback.print_stack()
-            logger.critical(str(e))
-            return 0, None
-
-        except KeyboardInterrupt:
-            return -3, None
-
-        return 1, url
-
-    def start_download(self, queue, folder='', regenerate_cbz=False):
-        if not isinstance(folder, (str, )):
-            folder = str(folder)
-
-        if self.path:
-            folder = os.path.join(self.path, folder)
-
-        if os.path.exists(folder + '.cbz'):
-            if not regenerate_cbz:
-                logger.warning(f'CBZ file "{folder}.cbz" exists, ignored download request')
-                return
-
-        logger.info(f'Doujinshi will be saved at "{folder}"')
+    def create_storage_object(self, folder:str):
         if not os.path.exists(folder):
             try:
                 os.makedirs(folder)
             except EnvironmentError as e:
                 logger.critical(str(e))
+        self.folder:str = folder
+        self.close = lambda: None # Only available in class CompressedDownloader
 
+    def start_download(self, queue, folder='') -> bool:
+        if not isinstance(folder, (str,)):
+            folder = str(folder)
+
+        if self.path:
+            folder = os.path.join(self.path, folder)
+
+        logger.info(f'Doujinshi will be saved at "{folder}"')
+        self.create_storage_object(folder)
+
+        if os.getenv('DEBUG', None) == 'NODOWNLOAD':
+            # Assuming we want to continue with rest of process.
+            return True
+
+        digit_length = len(str(len(queue)))
+        logger.info(f'Total download pages: {len(queue)}')
+        coroutines = [
+            self._semaphore_download(url, filename=os.path.basename(urlparse(url).path), length=digit_length)
+            for url in queue
+        ]
+
+        # Prevent coroutines infection
+        asyncio.run(self.fiber(coroutines))
+
+        self.close()
+
+        return True
+
+class CompressedDownloader(Downloader):
+    def create_storage_object(self, folder):
+        filename = f'{folder}.zip'
+        print(filename)
+        self.zipfile = zipfile.ZipFile(filename,'w')
+        self.close = lambda: self.zipfile.close()
+
+    async def save(self, filename, response) -> bool:
+        if response is None:
+            logger.error('Error: Response is None')
+            return False
+
+        image_data = io.BytesIO()
+        length = response.headers.get('content-length')
+        if length is None:
+            content = await response.read()
+            image_data.write(content)
         else:
-            logger.warning(f'Path "{folder}" already exist.')
+            async for chunk in response.aiter_bytes(2048):
+                image_data.write(chunk)
 
-        queue = [(self, url, folder, constant.CONFIG['proxy']) for url in queue]
-
-        pool = multiprocessing.Pool(self.size, init_worker)
-        [pool.apply_async(download_wrapper, args=item) for item in queue]
-
-        pool.close()
-        pool.join()
-
-
-def download_wrapper(obj, url, folder='', proxy=None):
-    if sys.platform == 'darwin' or semaphore.get_value():
-        return Downloader.download(obj, url=url, folder=folder, proxy=proxy)
-    else:
-        return -3, None
-
-
-def init_worker():
-    signal.signal(signal.SIGINT, subprocess_signal)
-
-
-def subprocess_signal(sig, frame):
-    if semaphore.acquire(timeout=1):
-        logger.warning('Ctrl-C pressed, exiting sub processes ...')
-
-    raise KeyboardInterrupt
+        image_data.seek(0)
+        self.zipfile.writestr(filename, image_data.read())
+        return True

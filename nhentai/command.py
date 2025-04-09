@@ -1,18 +1,20 @@
 # coding: utf-8
+import os
+import shutil
 import sys
 import signal
 import platform
 import urllib3.exceptions
 
 from nhentai import constant
-from nhentai.cmdline import cmd_parser, banner
+from nhentai.cmdline import cmd_parser, banner, write_config
 from nhentai.parser import doujinshi_parser, search_parser, legacy_search_parser, print_doujinshi, favorites_parser
 from nhentai.doujinshi import Doujinshi
-from nhentai.downloader import Downloader
+from nhentai.downloader import Downloader, CompressedDownloader
 from nhentai.logger import logger
 from nhentai.constant import BASE_URL
-from nhentai.utils import generate_html, generate_cbz, generate_main_html, generate_pdf, generate_metadata_file, \
-    paging, check_cookie, signal_handler, DB
+from nhentai.utils import generate_html, generate_doc, generate_main_html, generate_metadata, \
+    paging, check_cookie, signal_handler, DB, move_to_folder
 
 
 def main(proxy,cookie,useragent,para):
@@ -30,8 +32,13 @@ def main(proxy,cookie,useragent,para):
     logger.info(f'Using mirror: {BASE_URL}')
 
     # CONFIG['proxy'] will be changed after cmd_parser()
-    if constant.CONFIG['proxy']['http']:
-        logger.info(f'Using proxy: {constant.CONFIG["proxy"]["http"]}')
+    if constant.CONFIG['proxy']:
+        if isinstance(constant.CONFIG['proxy'], dict):
+            constant.CONFIG['proxy'] = constant.CONFIG['proxy'].get('http', '')
+            logger.warning(f'Update proxy config to: {constant.CONFIG["proxy"]}')
+            write_config()
+
+        logger.info(f'Using proxy: {constant.CONFIG["proxy"]}')
 
     if not constant.CONFIG['template']:
         constant.CONFIG['template'] = 'default'
@@ -46,11 +53,14 @@ def main(proxy,cookie,useragent,para):
 
     page_list = paging(options.page)
 
+    if options.retry:
+        constant.RETRY_TIMES = int(options.retry)
+
     if options.favorites:
         if not options.is_download:
             logger.warning('You do not specify --download option')
 
-        doujinshis = favorites_parser(page=page_list)
+        doujinshis = favorites_parser(page=page_list) if options.page else favorites_parser()
 
     elif options.keyword:
         if constant.CONFIG['language']:
@@ -61,6 +71,10 @@ def main(proxy,cookie,useragent,para):
         doujinshis = _search_parser(options.keyword, sorting=options.sorting, page=page_list,
                                     is_page_all=options.page_all)
 
+    elif options.artist:
+        doujinshis = legacy_search_parser(options.artist, sorting=options.sorting, page=page_list,
+                                          is_page_all=options.page_all, type_='ARTIST')
+
     elif not doujinshi_ids:
         doujinshi_ids = options.id
 
@@ -70,13 +84,19 @@ def main(proxy,cookie,useragent,para):
 
     if options.is_save_download_history:
         with DB() as db:
-            data = map(int, db.get_all())
+            data = set(map(int, db.get_all()))
 
         doujinshi_ids = list(set(map(int, doujinshi_ids)) - set(data))
+        logger.info(f'New doujinshis account: {len(doujinshi_ids)}')
+
+    if options.zip:
+        options.is_nohtml = True
 
     if not options.is_show:
-        downloader = Downloader(path=options.output_dir, size=options.threads,
-                                timeout=options.timeout, delay=options.delay)
+        downloader = (CompressedDownloader if options.zip else Downloader)(path=options.output_dir, threads=options.threads,
+                                timeout=options.timeout, delay=options.delay,
+                                exit_on_fail=options.exit_on_fail,
+                                no_filename_padding=options.no_filename_padding)
 
         for doujinshi_id in doujinshi_ids:
             doujinshi_info = doujinshi_parser(doujinshi_id)
@@ -85,24 +105,40 @@ def main(proxy,cookie,useragent,para):
             else:
                 continue
 
-            if not options.dryrun:
-                doujinshi.downloader = downloader
-                doujinshi.download(regenerate_cbz=options.regenerate_cbz)
+            doujinshi.downloader = downloader
+
+            if doujinshi.check_if_need_download(options):
+                doujinshi.download()
+            else:
+                logger.info(f'Skip download doujinshi because a PDF/CBZ file exists of doujinshi {doujinshi.name}')
 
             if options.generate_metadata:
-                table = doujinshi.table
-                generate_metadata_file(options.output_dir, table, doujinshi)
+                generate_metadata(options.output_dir, doujinshi)
 
             if options.is_save_download_history:
                 with DB() as db:
                     db.add_one(doujinshi.id)
 
-            if not options.is_nohtml and not options.is_cbz and not options.is_pdf:
+            if not options.is_nohtml:
                 generate_html(options.output_dir, doujinshi, template=constant.CONFIG['template'])
-            elif options.is_cbz:
-                generate_cbz(options.output_dir, doujinshi, options.rm_origin_dir)
-            elif options.is_pdf:
-                generate_pdf(options.output_dir, doujinshi, options.rm_origin_dir)
+
+            if options.is_cbz:
+                generate_doc('cbz', options.output_dir, doujinshi, options.regenerate)
+
+            if options.is_pdf:
+                generate_doc('pdf', options.output_dir, doujinshi, options.regenerate)
+
+            if options.move_to_folder:
+                if options.is_cbz:
+                    move_to_folder(options.output_dir, doujinshi, 'cbz')
+                if options.is_pdf:
+                    move_to_folder(options.output_dir, doujinshi, 'pdf')
+
+            if options.rm_origin_dir:
+                if options.move_to_folder:
+                    logger.critical('You specified both --move-to-folder and --rm-origin-dir options, '
+                                    'you will not get anything :(')
+                shutil.rmtree(os.path.join(options.output_dir, doujinshi.filename), ignore_errors=True)
 
         if options.main_viewer:
             generate_main_html(options.output_dir)

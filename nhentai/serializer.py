@@ -1,13 +1,17 @@
 # coding: utf-8
 import json
 import os
+
+from nhentai.constant import PATH_SEPARATOR, LANGUAGE_ISO
 from xml.sax.saxutils import escape
-from nhentai.constant import LANGUAGE_ISO
+from requests.structures import CaseInsensitiveDict
 
 
-def serialize_json(doujinshi, output_dir):
+def serialize_json(doujinshi, output_dir: str):
     metadata = {'title': doujinshi.name,
                 'subtitle': doujinshi.info.subtitle}
+    if doujinshi.info.favorite_counts:
+        metadata['favorite_counts'] = doujinshi.favorite_counts
     if doujinshi.info.date:
         metadata['upload_date'] = doujinshi.info.date
     if doujinshi.info.parodies:
@@ -22,7 +26,7 @@ def serialize_json(doujinshi, output_dir):
         metadata['group'] = [i.strip() for i in doujinshi.info.groups.split(',')]
     if doujinshi.info.languages:
         metadata['language'] = [i.strip() for i in doujinshi.info.languages.split(',')]
-    metadata['category'] = doujinshi.info.categories
+    metadata['category'] = [i.strip() for i in doujinshi.info.categories.split(',')]
     metadata['URL'] = doujinshi.url
     metadata['Pages'] = doujinshi.pages
 
@@ -44,6 +48,7 @@ def serialize_comic_xml(doujinshi, output_dir):
         xml_write_simple_tag(f, 'PageCount', doujinshi.pages)
         xml_write_simple_tag(f, 'URL', doujinshi.url)
         xml_write_simple_tag(f, 'NhentaiId', doujinshi.id)
+        xml_write_simple_tag(f, 'Favorites', doujinshi.favorite_counts)
         xml_write_simple_tag(f, 'Genre', doujinshi.info.categories)
 
         xml_write_simple_tag(f, 'BlackAndWhite', 'No' if doujinshi.info.tags and
@@ -73,13 +78,33 @@ def serialize_comic_xml(doujinshi, output_dir):
         f.write('</ComicInfo>')
 
 
+def serialize_info_txt(doujinshi, output_dir: str):
+    info_txt_path = os.path.join(output_dir, 'info.txt')
+    f = open(info_txt_path, 'w', encoding='utf-8')
+
+    fields = ['TITLE', 'ORIGINAL TITLE', 'AUTHOR', 'ARTIST', 'GROUPS', 'CIRCLE', 'SCANLATOR',
+              'TRANSLATOR', 'PUBLISHER', 'DESCRIPTION', 'STATUS', 'CHAPTERS', 'PAGES',
+              'TAGS',  'FAVORITE COUNTS', 'TYPE', 'LANGUAGE', 'RELEASED', 'READING DIRECTION', 'CHARACTERS',
+              'SERIES', 'PARODY', 'URL']
+
+    temp_dict = CaseInsensitiveDict(dict(doujinshi.table))
+    for i in fields:
+        v = temp_dict.get(i)
+        v = temp_dict.get(f'{i}s') if v is None else v
+        v = doujinshi.info.get(i.lower(), None) if v is None else v
+        v = doujinshi.info.get(f'{i.lower()}s', "Unknown") if v is None else v
+        f.write(f'{i}: {v}\n')
+
+    f.close()
+
+
 def xml_write_simple_tag(f, name, val, indent=1):
     f.write(f'{" "*indent}<{name}>{escape(str(val))}</{name}>\n')
 
 
 def merge_json():
     lst = []
-    output_dir = "./"
+    output_dir = f".{PATH_SEPARATOR}"
     os.chdir(output_dir)
     doujinshi_dirs = next(os.walk('.'))[1]
     for folder in doujinshi_dirs:
@@ -127,3 +152,4 @@ def set_js_database():
         indexed_json = json.dumps(indexed_json, separators=(',', ':'))
         f.write('var data = ' + indexed_json)
         f.write(';\nvar tags = ' + unique_json)
+
